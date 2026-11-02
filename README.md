@@ -88,6 +88,8 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 | `POST` | `/api/conversations/{id}/messages` | Yes | Ask a question with optional customer identifier and business/task context; returns answer and cited sources |
 | `POST` | `/chat` | Yes | Send a required `message`; optionally continue a conversation with `conversation_id`; returns the answer, citations, and conversation ID |
 | `POST` | `/api/business-summary` | Yes | Generate a structured summary from the caller's uploaded records and optional request-supplied business/task context |
+| `GET` | `/api/customers/search?q=...` | Yes | Search the caller's ready uploaded-document text for customer-related excerpts |
+| `GET` | `/api/tasks/search?q=...` | Yes | Search the caller's ready uploaded-document text for task-related excerpts |
 | `POST` | `/api/communications/generate` | Yes | Generate a grounded email or short message with configurable purpose, tone, length, and language |
 | `DELETE` | `/api/conversations/{id}` | Yes | Delete an owned conversation and its messages |
 | `GET`, `POST` | `/api/documents` | Yes | List or upload PDF/DOCX/TXT files (8 MB max) |
@@ -95,6 +97,16 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 | `GET` | `/api/vector-index` | Yes | Read vector index configuration and the user's record count |
 
 Authenticated endpoints expect `Authorization: Bearer <access_token>`. The API rate limits each client IP to 10 auth requests/minute and 120 other API requests/minute. Configure trusted proxy handling at the ingress if deployed behind a reverse proxy.
+
+### Customer and task search
+
+`GET /api/customers/search` and `GET /api/tasks/search` search only the
+authenticated user's ready uploaded-document text and return short excerpts,
+not normalized customer or task records. Use `q` (1-200 characters), with
+optional `limit` (1-50, default 20) and `offset` (default 0). The default
+database contains no normalized customer/task tables, so task status, priority,
+and assignee are not structured filters. See
+[CUSTOMER_TASK_SEARCH_REPORT.md](./CUSTOMER_TASK_SEARCH_REPORT.md) for details.
 
 ### Email and message generation
 

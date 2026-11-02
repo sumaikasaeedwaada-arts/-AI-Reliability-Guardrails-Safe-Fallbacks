@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import PurePath
 
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
@@ -32,6 +32,7 @@ from AI_service.schemas.communication import (
     CommunicationRequest,
     CommunicationResponse,
 )
+from AI_service.schemas.search import SearchResponse
 from AI_service.schemas.chat import (
     BusinessContext,
     MessageRequest,
@@ -49,6 +50,7 @@ from AI_service.services.communication_service import (
     InvalidCommunicationError,
     generate_communication,
 )
+from AI_service.services.document_search_service import search_document_excerpts
 from AI_service.time_utils import utc_now
 
 
@@ -295,6 +297,70 @@ def list_documents(user: dict = Depends(authenticated_user)):
             (user["id"],)
         ).fetchall()
     return {"documents": [dict(row) for row in rows]}
+
+
+def _search_uploaded_documents(
+    query: str,
+    limit: int,
+    offset: int,
+    user: dict
+) -> dict:
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise HTTPException(
+            status_code=422,
+            detail="Search query must contain at least one non-whitespace character."
+        )
+
+    try:
+        with database.connect() as connection:
+            results, total = search_document_excerpts(
+                connection,
+                user["id"],
+                normalized_query,
+                limit,
+                offset
+            )
+    except sqlite3.Error as exc:
+        logger.error("Uploaded-document search failed.")
+        raise HTTPException(
+            status_code=503,
+            detail="Search is temporarily unavailable."
+        ) from exc
+
+    return {
+        "success": True,
+        "results": results,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get(
+    "/api/customers/search",
+    response_model=SearchResponse
+)
+def search_customers(
+    q: str = Query(min_length=1, max_length=200),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=100000),
+    user: dict = Depends(authenticated_user)
+):
+    return _search_uploaded_documents(q, limit, offset, user)
+
+
+@app.get(
+    "/api/tasks/search",
+    response_model=SearchResponse
+)
+def search_tasks(
+    q: str = Query(min_length=1, max_length=200),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=100000),
+    user: dict = Depends(authenticated_user)
+):
+    return _search_uploaded_documents(q, limit, offset, user)
 
 
 @app.get("/api/vector-index")
