@@ -14,11 +14,19 @@ const documentList = document.querySelector("#document-list");
 const documentInput = document.querySelector("#document-input");
 const sendButton = document.querySelector("#send-button");
 const toast = document.querySelector("#toast");
+const notificationsTrigger = document.querySelector("#notifications-trigger");
+const notificationsPanel = document.querySelector("#notifications-panel");
+const notificationCount = document.querySelector("#notification-count");
+const notificationList = document.querySelector("#notification-list");
+const loadMoreNotifications = document.querySelector("#load-more-notifications");
 
 let token = localStorage.getItem("assistant-token");
 let activeConversation = null;
 let registering = false;
 let toastTimer;
+let notificationOffset = 0;
+let notificationTotal = 0;
+let notificationUnreadFilter = null;
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -48,6 +56,9 @@ function signOut() {
   token = null;
   activeConversation = null;
   clearContextFields();
+  notificationsPanel.classList.add("hidden");
+  notificationsTrigger.setAttribute("aria-expanded", "false");
+  notificationCount.classList.add("hidden");
   workspace.classList.add("hidden");
   authScreen.classList.remove("hidden");
 }
@@ -124,13 +135,107 @@ async function loadConversations() {
 async function loadDocuments() {
   const { documents } = await api("/api/documents");
   documentList.replaceChildren();
-  for (const document of documents) {
+  for (const item of documents) {
     const entry = document.createElement("div");
     entry.className = "document-entry";
-    entry.textContent = document.filename;
-    entry.title = document.filename;
+    entry.textContent = item.filename;
+    entry.title = item.filename;
     documentList.append(entry);
   }
+}
+
+async function refreshNotificationBadge() {
+  const { unread_count } = await api("/api/notifications/unread-count");
+  notificationCount.textContent = unread_count > 99 ? "99+" : String(unread_count);
+  notificationCount.classList.toggle("hidden", unread_count === 0);
+  notificationsTrigger.setAttribute(
+    "aria-label",
+    unread_count ? `Notifications, ${unread_count} unread` : "Notifications"
+  );
+}
+
+function renderNotification(notification) {
+  const entry = document.createElement("article");
+  entry.className = `notification-entry ${notification.is_read ? "read" : "unread"}`;
+  const indicator = document.createElement("span");
+  indicator.className = "notification-indicator";
+  indicator.setAttribute("aria-hidden", "true");
+
+  const content = document.createElement("div");
+  const summary = document.createElement("div");
+  summary.className = "notification-content";
+  const title = document.createElement("strong");
+  title.textContent = notification.title;
+  const message = document.createElement("p");
+  message.textContent = notification.message;
+  const created = document.createElement("time");
+  created.dateTime = notification.created_at;
+  created.textContent = new Date(notification.created_at).toLocaleString();
+  summary.append(title, message, created);
+  content.append(summary);
+
+  const actions = document.createElement("div");
+  actions.className = "notification-actions";
+  if (!notification.is_read) {
+    const markRead = document.createElement("button");
+    markRead.type = "button";
+    markRead.textContent = "Mark as read";
+    markRead.addEventListener("click", async () => {
+      try {
+        await api(`/api/notifications/${notification.id}/read`, { method: "PATCH" });
+        await Promise.all([refreshNotificationBadge(), loadNotifications(true)]);
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+    actions.append(markRead);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", async () => {
+    try {
+      await api(`/api/notifications/${notification.id}`, { method: "DELETE" });
+      await Promise.all([refreshNotificationBadge(), loadNotifications(true)]);
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+  actions.append(remove);
+  content.append(actions);
+  entry.append(indicator, content);
+  notificationList.append(entry);
+}
+
+async function loadNotifications(reset = false) {
+  if (reset) {
+    notificationOffset = 0;
+    notificationTotal = 0;
+    notificationList.replaceChildren();
+  }
+  const params = new URLSearchParams({
+    limit: "10",
+    offset: String(notificationOffset)
+  });
+  if (notificationUnreadFilter !== null) {
+    params.set("unread", String(notificationUnreadFilter));
+  }
+  const result = await api(`/api/notifications?${params}`);
+  notificationTotal = result.total;
+  for (const notification of result.notifications) renderNotification(notification);
+  notificationOffset += result.notifications.length;
+  if (notificationOffset === 0) {
+    const empty = document.createElement("p");
+    empty.className = "notification-empty";
+    empty.textContent = notificationUnreadFilter
+      ? "You’re all caught up."
+      : "No notifications yet.";
+    notificationList.append(empty);
+  }
+  loadMoreNotifications.classList.toggle(
+    "hidden",
+    notificationOffset >= notificationTotal
+  );
 }
 
 async function openConversation(id) {
@@ -262,6 +367,10 @@ async function uploadSelectedFile() {
   try {
     const result = await api("/api/documents", { method: "POST", body });
     await loadDocuments();
+    await refreshNotificationBadge();
+    if (!notificationsPanel.classList.contains("hidden")) {
+      await loadNotifications(true);
+    }
     showToast(`${result.filename} is ready (${result.chunk_count} chunks).`);
   } catch (error) {
     showToast(error.message);
@@ -278,5 +387,64 @@ document.querySelector("#close-sidebar").addEventListener("click", () => {
 });
 documentInput.addEventListener("change", uploadSelectedFile);
 document.querySelector("#sign-out").addEventListener("click", signOut);
+notificationsTrigger.addEventListener("click", async () => {
+  const opening = notificationsPanel.classList.contains("hidden");
+  notificationsPanel.classList.toggle("hidden", !opening);
+  notificationsTrigger.setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    try {
+      await loadNotifications(true);
+      await refreshNotificationBadge();
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+});
+document.querySelectorAll("[data-notification-filter]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    notificationUnreadFilter = button.dataset.notificationFilter === "unread"
+      ? true
+      : null;
+    document.querySelectorAll("[data-notification-filter]").forEach((filter) => {
+      const active = filter === button;
+      filter.classList.toggle("active", active);
+      filter.setAttribute("aria-pressed", String(active));
+    });
+    try {
+      await loadNotifications(true);
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+});
+document.querySelector("#mark-all-read").addEventListener("click", async () => {
+  try {
+    await api("/api/notifications/mark-all-read", { method: "PATCH" });
+    await Promise.all([refreshNotificationBadge(), loadNotifications(true)]);
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+loadMoreNotifications.addEventListener("click", async () => {
+  try {
+    await loadNotifications();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".notification-menu") &&
+      !notificationsPanel.classList.contains("hidden")) {
+    notificationsPanel.classList.add("hidden");
+    notificationsTrigger.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !notificationsPanel.classList.contains("hidden")) {
+    notificationsPanel.classList.add("hidden");
+    notificationsTrigger.setAttribute("aria-expanded", "false");
+    notificationsTrigger.focus();
+  }
+});
 
 if (token) showWorkspace();

@@ -43,6 +43,23 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS documents_user_created
     ON documents(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT NOT NULL,
+    related_entity_id TEXT,
+    related_entity_type TEXT,
+    is_read INTEGER NOT NULL DEFAULT 0 CHECK(is_read IN (0, 1)),
+    created_at TEXT NOT NULL,
+    dedupe_key TEXT,
+    UNIQUE(user_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS notifications_user_created
+    ON notifications(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS notifications_user_read_created
+    ON notifications(user_id, is_read, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

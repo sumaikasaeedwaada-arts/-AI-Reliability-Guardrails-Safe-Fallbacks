@@ -88,6 +88,7 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 | `POST` | `/api/conversations/{id}/messages` | Yes | Ask a question with optional customer identifier and business/task context; returns answer and cited sources |
 | `POST` | `/chat` | Yes | Send a required `message`; optionally continue a conversation with `conversation_id`; returns the answer, citations, and conversation ID |
 | `POST` | `/api/business-summary` | Yes | Generate a structured summary from the caller's uploaded records and optional request-supplied business/task context |
+| `POST` | `/api/customer-insights` | Yes | Analyze the caller's uploaded records for repeated customer issues, interaction wording, feedback themes, and transaction wording |
 | `GET` | `/api/customers/search?q=...` | Yes | Search the caller's ready uploaded-document text for customer-related excerpts |
 | `GET` | `/api/tasks/search?q=...` | Yes | Search the caller's ready uploaded-document text for task-related excerpts |
 | `POST` | `/api/communications/generate` | Yes | Generate a grounded email or short message with configurable purpose, tone, length, and language |
@@ -139,13 +140,29 @@ Example request:
   "length": "medium",
   "language": "English",
   "recipient_name": "John",
+  "recipient_context": "We met to discuss expense tracking.",
+  "key_points": [
+    "Mention the offline-first records feature",
+    "Ask whether John wants a product walkthrough"
+  ],
   "additional_instructions": "Follow up about the previous meeting."
 }
 ```
 
-Successful email responses contain `success: true` and a `content` object with
-`subject` and `body`. Short-message responses contain `content.message`. Model
-failures return HTTP 503; malformed model output returns HTTP 502.
+Email response:
+
+```json
+{
+  "success": true,
+  "content": {
+    "subject": "Following Up on Our Previous Meeting",
+    "body": "Hello John, ... "
+  }
+}
+```
+
+Short-message requests use `"communication_type": "message"` and the response
+content contains a `message` field rather than an email subject or body.
 
 ### Prepared business knowledge
 

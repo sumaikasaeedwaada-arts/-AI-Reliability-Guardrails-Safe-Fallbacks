@@ -46,6 +46,33 @@
           <div><strong id="conversation-title">New conversation</strong>
             <span class="topbar-subtitle">Private document-grounded workspace</span></div>
           <div class="topbar-actions">
+            <div class="notification-menu">
+              <button id="notifications-trigger" class="notification-trigger"
+                type="button" aria-label="Notifications" aria-expanded="false"
+                aria-controls="notifications-panel">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                  <path d="M10 21h4"></path>
+                </svg>
+                <span id="notification-count" class="notification-count hidden"></span>
+              </button>
+              <section id="notifications-panel" class="notifications-panel hidden"
+                aria-label="Notifications">
+                <div class="notifications-heading">
+                  <h2>Notifications</h2>
+                  <button id="mark-all-read" class="text-button" type="button">Mark all read</button>
+                </div>
+                <div class="notification-filters" role="group" aria-label="Filter notifications">
+                  <button class="notification-filter active" type="button"
+                    data-notification-filter="all" aria-pressed="true">All</button>
+                  <button class="notification-filter" type="button"
+                    data-notification-filter="unread" aria-pressed="false">Unread</button>
+                </div>
+                <div id="notification-list" class="notification-list" aria-live="polite"></div>
+                <button id="load-more-notifications" class="load-more-notifications hidden"
+                  type="button">Load more</button>
+              </section>
+            </div>
             <button id="mobile-menu" class="icon-button" aria-label="Show conversations">☰</button>
             <button id="mobile-upload" class="icon-button" aria-label="Add documents">＋</button>
           </div>

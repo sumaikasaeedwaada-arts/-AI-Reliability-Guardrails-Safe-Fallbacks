@@ -7,7 +7,15 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import PurePath
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Path as ApiPath,
+    Query,
+    Request,
+    UploadFile
+)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
@@ -33,6 +41,12 @@ from AI_service.schemas.communication import (
     CommunicationResponse,
 )
 from AI_service.schemas.search import SearchResponse
+from AI_service.schemas.notifications import (
+    MarkAllReadResponse,
+    NotificationActionResponse,
+    NotificationListResponse,
+    UnreadCountResponse,
+)
 from AI_service.schemas.chat import (
     BusinessContext,
     MessageRequest,
@@ -51,6 +65,7 @@ from AI_service.services.communication_service import (
     generate_communication,
 )
 from AI_service.services.document_search_service import search_document_excerpts
+from AI_service.services import notification_service
 from AI_service.time_utils import utc_now
 
 
@@ -376,6 +391,90 @@ def vector_index_status(user: dict = Depends(authenticated_user)):
         ) from exc
 
 
+@app.get(
+    "/api/notifications",
+    response_model=NotificationListResponse
+)
+def get_notifications(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    unread: bool | None = Query(default=None),
+    user: dict = Depends(authenticated_user)
+):
+    with database.connect() as connection:
+        notifications, total = notification_service.list_notifications(
+            connection,
+            user["id"],
+            limit=limit,
+            offset=offset,
+            is_read=None if unread is None else not unread
+        )
+    return {
+        "success": True,
+        "notifications": notifications,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get(
+    "/api/notifications/unread-count",
+    response_model=UnreadCountResponse
+)
+def get_notification_unread_count(user: dict = Depends(authenticated_user)):
+    with database.connect() as connection:
+        count = notification_service.unread_count(connection, user["id"])
+    return {"success": True, "unread_count": count}
+
+
+@app.patch(
+    "/api/notifications/mark-all-read",
+    response_model=MarkAllReadResponse
+)
+def mark_all_notifications_read(user: dict = Depends(authenticated_user)):
+    with database.connect() as connection:
+        updated_count = notification_service.mark_all_notifications_read(
+            connection,
+            user["id"]
+        )
+    return {"success": True, "updated_count": updated_count}
+
+
+@app.patch(
+    "/api/notifications/{notification_id}/read",
+    response_model=NotificationActionResponse
+)
+def mark_notification_read(
+    notification_id: int = ApiPath(ge=1),
+    user: dict = Depends(authenticated_user)
+):
+    with database.connect() as connection:
+        notification = notification_service.mark_notification_read(
+            connection,
+            user["id"],
+            notification_id
+        )
+    if notification is None:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    return {"success": True, "notification": notification}
+
+
+@app.delete("/api/notifications/{notification_id}", status_code=204)
+def remove_notification(
+    notification_id: int = ApiPath(ge=1),
+    user: dict = Depends(authenticated_user)
+):
+    with database.connect() as connection:
+        deleted = notification_service.delete_notification(
+            connection,
+            user["id"],
+            notification_id
+        )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+
 @app.post(
     "/api/business-summary",
     response_model=BusinessSummaryResponse
@@ -496,6 +595,17 @@ async def upload_document(
                 (document_id, user["id"], filename[:255], media_type, now)
             )
             rag.store_embeddings(connection, document_id, embedded_chunks)
+            notification_service.create_notification(
+                connection,
+                user_id=user["id"],
+                title="Document ready",
+                message=f"{filename[:255]} is ready and searchable.",
+                notification_type="document_ready",
+                related_entity_id=document_id,
+                related_entity_type="document",
+                created_at=now,
+                dedupe_key=f"document-ready:{document_id}"
+            )
     except (ValueError, RuntimeError) as exc:
         logger.error("Document embeddings could not be stored.")
         raise HTTPException(
