@@ -257,7 +257,11 @@ async function showWorkspace() {
   authScreen.classList.add("hidden");
   workspace.classList.remove("hidden");
   try {
-    await Promise.all([loadConversations(), loadDocuments()]);
+    await Promise.all([
+      loadConversations(),
+      loadDocuments(),
+      refreshNotificationBadge()
+    ]);
   } catch (error) {
     showToast(error.message);
   }

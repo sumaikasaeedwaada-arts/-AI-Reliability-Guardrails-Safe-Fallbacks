@@ -204,6 +204,68 @@ class RagApiTests(unittest.TestCase):
         self.assertEqual(len(history.json()["messages"]), 2)
         self.assertEqual(history.json()["messages"][1]["citations"][0]["index"], 1)
 
+    def test_follow_up_retrieval_uses_prior_user_question_as_context(self):
+        searches = []
+
+        def search_chunks(connection, user_id, query):
+            searches.append(query)
+            if "fiscal year 2024" not in query.casefold():
+                return []
+            return [{
+                "document_id": "annual-report",
+                "filename": "annual-report.txt",
+                "page_number": None,
+                "score": 0.91,
+                "content": "Revenue in fiscal year 2025 was $51 million.",
+                "chunk_id": 4
+            }]
+
+        with (
+            patch.object(rag, "search_chunks", side_effect=search_chunks),
+            patch.object(
+                api.ai_service,
+                "generate_answer",
+                side_effect=[
+                    "The document does not include that year's figure.",
+                    "Revenue in fiscal year 2025 was $51 million [1]."
+                ]
+            ) as generate
+        ):
+            conversation = self.client.post(
+                "/api/conversations",
+                headers=self.headers,
+                json={"title": "Annual revenue"}
+            ).json()
+            first = self.client.post(
+                f"/api/conversations/{conversation['id']}/messages",
+                headers=self.headers,
+                json={"message": "What did the report say about fiscal year 2024?"}
+            )
+            follow_up = self.client.post(
+                f"/api/conversations/{conversation['id']}/messages",
+                headers=self.headers,
+                json={"message": "And what about the following year?"}
+            )
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(follow_up.status_code, 200, follow_up.text)
+        self.assertIn("fiscal year 2024", searches[1].casefold())
+        self.assertIn("following year", searches[1].casefold())
+        self.assertNotIn("does not include", searches[1].casefold())
+        self.assertEqual(
+            follow_up.json()["citations"][0]["filename"],
+            "annual-report.txt"
+        )
+        prompt = json.loads(generate.call_args_list[1].args[0])
+        self.assertEqual(
+            prompt["retrieved_document_context"][0]["text"],
+            "Revenue in fiscal year 2025 was $51 million."
+        )
+        self.assertEqual(
+            prompt["conversation_history"][-1]["content"],
+            "The document does not include that year's figure."
+        )
+
     def test_message_combines_document_business_and_task_context(self):
         with (
             patch.object(

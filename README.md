@@ -54,6 +54,7 @@ FastAPI ── auth + validation + SQLite-backed rate limits
 | `conversations` | `id`, `user_id → users.id`, `title`, `created_at`, `updated_at` |
 | `messages` | `id`, `conversation_id → conversations.id`, `role`, `content`, `citations_json`, `created_at` |
 | `documents` | `id`, `user_id → users.id`, `filename`, `media_type`, `status`, `created_at` |
+| `notifications` | `id`, `user_id → users.id`, title/message/type, optional related entity, `is_read`, `created_at`, optional unique event key |
 | `chunks` | Stable `(document_id, chunk_index)` record key, `page_number`, `content`, `embedding_json` |
 | `vector_index_state` | Embedding model, established vector dimension, cosine similarity metric |
 | `rate_limit_buckets` | Shared SQLite fixed-window request counters keyed by client and route class |
@@ -96,41 +97,71 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 | `GET`, `POST` | `/api/documents` | Yes | List or upload PDF/DOCX/TXT files (8 MB max) |
 | `DELETE` | `/api/documents/{id}` | Yes | Delete an owned document and its chunks |
 | `GET` | `/api/vector-index` | Yes | Read vector index configuration and the user's record count |
+| `GET` | `/api/notifications` | Yes | List the caller's notifications; supports `limit`, `offset`, and `unread` filters |
+| `GET` | `/api/notifications/unread-count` | Yes | Count the caller's unread notifications |
+| `PATCH` | `/api/notifications/{id}/read` | Yes | Mark one owned notification as read |
+| `PATCH` | `/api/notifications/mark-all-read` | Yes | Mark all of the caller's notifications as read |
+| `DELETE` | `/api/notifications/{id}` | Yes | Delete one owned notification |
 
 Authenticated endpoints expect `Authorization: Bearer <access_token>`. The API rate limits each client IP to 10 auth requests/minute and 120 other API requests/minute. Configure trusted proxy handling at the ingress if deployed behind a reverse proxy.
 
-### Customer and task search
+Notifications are stored persistently in SQLite, are scoped to their recipient,
+and are returned newest-first. A successful document upload creates a
+deduplicated “Document ready” notification for the authenticated uploader.
+The application currently has no normalized customer/task records or event
+services, so it does not emit customer, task-assignment, status-change, or
+deadline notifications based on uploaded text or request-supplied context.
 
-`GET /api/customers/search` and `GET /api/tasks/search` search only the
-authenticated user's ready uploaded-document text and return short excerpts,
-not normalized customer or task records. Use `q` (1-200 characters), with
-optional `limit` (1-50, default 20) and `offset` (default 0). The default
-database contains no normalized customer/task tables, so task status, priority,
-and assignee are not structured filters. See
-[CUSTOMER_TASK_SEARCH_REPORT.md](./CUSTOMER_TASK_SEARCH_REPORT.md) for details.
+Customer insights use only ready documents owned by the authenticated account.
+The optional `date_from` and `date_to` filters apply to document upload dates;
+`customer_identifier` restricts analysis to chunks containing that exact
+identifier. This repository does not currently store normalized customer,
+interaction, feedback, support-ticket, or transaction records, so the endpoint
+reports those data-source limitations. It reports recurring categories only
+when matching wording occurs in at least two distinct documents; keyword-based
+matching can miss differently worded issues. AI-generated service opportunities
+are based on aggregate topic counts only and are returned separately from
+measured counts. Counts represent matching text mentions and distinct
+documents, not unique customers, verified support cases, or completed
+transactions. AI chat history is excluded because it is not a structured
+customer-interaction log. The endpoint does not claim that document upload
+dates are customer-event dates.
 
-### Email and message generation
+Customer and task search are backed by the existing user-owned `documents` and
+`chunks` tables. Both endpoints search uploaded document text and return one
+short excerpt per matching document, not normalized customer or task entities.
+The query is a case-insensitive substring match (including Unicode casefolding)
+across the whole excerpt source; it is limited to 200 characters. Results are
+paginated with `limit` (default 20, maximum 50) and `offset`. Since this
+repository has no normalized customer/task tables and task context is not
+persisted, the endpoints cannot guarantee that a matching excerpt describes a
+customer or task, or filter by structured fields such as task status, priority,
+or assignee. They never search another user's documents. Search uses SQLite
+substring matching without a full-text index, so very large document
+collections may need an indexed search backend.
+See [CUSTOMER_TASK_SEARCH_REPORT.md](./CUSTOMER_TASK_SEARCH_REPORT.md) for
+request/response examples, test coverage, and the current data-source limits.
 
-`POST /api/communications/generate` requires the caller's bearer token.
-`communication_type` is required and accepts `email` or `message`. Purpose
-defaults to `customer_support` and also supports `follow_up`, `announcement`,
-`invitation`, and `custom` (which requires `custom_purpose`). Tone defaults to
-`professional` and supports `friendly`, `formal`, `polite`, `persuasive`, and
-`empathetic`. Length defaults to `medium` and supports `short` and `long`.
-Language defaults to English. Optional recipient name/context, sender name,
-customer identifier, and additional instructions are validated and
-length-limited. Email responses include a subject and body; message responses
-contain a single `message` field with no email formatting.
+Communication generation requires `communication_type` (`email` or `message`).
+Purpose defaults to `customer_support` and also supports `follow_up`,
+`reminder`, `announcement`, `business_update`, `invitation`,
+`meeting_confirmation`, and `custom` (with a required `custom_purpose`).
+Tone defaults to `professional`; supported tones are `friendly`, `formal`,
+`polite`, `persuasive`, and `empathetic`. Length defaults to `medium` and
+supports `short` and `long`. Language defaults to English. Optional recipient
+name/context, up to 20 key points (500 characters each), sender name, customer
+identifier, and additional instructions are length-limited and validated. The
+endpoint returns email content as a subject and body, and short-message content
+as a single `message` field.
 
-Relevant public business knowledge is retrieved using the existing semantic
-retriever. Customer-record excerpts are retrieved only when a customer
-identifier is provided and are restricted to ready documents owned by the
-authenticated user. Retrieved material is treated as data, not instructions.
-Missing details are represented with a clear placeholder or a request for
-clarification rather than invented facts. The endpoint generates content only;
-it does not send communications.
+The endpoint uses Gemini through the existing AI model service and the
+existing public business-knowledge retriever. Customer-record excerpts are
+retrieved only when a customer identifier is provided and are restricted to
+ready documents owned by the authenticated user. Retrieved material is treated
+as data, not instructions. Missing details are represented with a clear
+placeholder or a request for clarification rather than invented facts.
 
-Example request:
+Example email request:
 
 ```json
 {
@@ -284,7 +315,7 @@ Open <http://127.0.0.1:8000>. Create an account, upload a file, and ask a questi
 ## Tests
 
 ```powershell
-python -m unittest AI_service.test_communication AI_service.test_business_summary AI_service.test_chat_api AI_service.test_rag_api -v
+python -m unittest AI_service.test_communication AI_service.test_business_summary AI_service.test_chat_api AI_service.test_customer_insights AI_service.test_rag_api AI_service.test_search_api -v
 ```
 
 Tests mock model calls and use a temporary SQLite database; they do not require a real provider key.

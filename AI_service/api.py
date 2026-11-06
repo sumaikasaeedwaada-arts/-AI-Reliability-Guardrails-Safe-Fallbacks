@@ -36,6 +36,10 @@ from AI_service.schemas.business_summary import (
     BusinessSummaryRequest,
     BusinessSummaryResponse,
 )
+from AI_service.schemas.customer_insights import (
+    CustomerInsightsRequest,
+    CustomerInsightsResponse,
+)
 from AI_service.schemas.communication import (
     CommunicationRequest,
     CommunicationResponse,
@@ -58,6 +62,11 @@ from AI_service.services.business_summary_service import (
     BusinessSummaryUnavailableError,
     InvalidBusinessSummaryError,
     generate_business_summary,
+)
+from AI_service.services.customer_insights_service import (
+    CustomerInsightsUnavailableError,
+    InvalidCustomerInsightsError,
+    generate_customer_insights,
 )
 from AI_service.services.communication_service import (
     CommunicationUnavailableError,
@@ -499,6 +508,36 @@ def business_summary(
         ) from exc
     except Exception as exc:
         logger.error("Unexpected business summary processing failure.")
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected server error occurred."
+        ) from exc
+
+
+@app.post(
+    "/api/customer-insights",
+    response_model=CustomerInsightsResponse
+)
+def customer_insights(
+    request: CustomerInsightsRequest,
+    user: dict = Depends(authenticated_user)
+):
+    try:
+        insights = generate_customer_insights(user["id"], request)
+        return {"success": True, "insights": insights}
+    except InvalidCustomerInsightsError as exc:
+        logger.warning("Customer insights model returned invalid output.")
+        raise HTTPException(
+            status_code=502,
+            detail="The AI service returned invalid customer insights."
+        ) from exc
+    except CustomerInsightsUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Customer insights are temporarily unavailable."
+        ) from exc
+    except Exception as exc:
+        logger.error("Unexpected customer insights processing failure.")
         raise HTTPException(
             status_code=500,
             detail="An unexpected server error occurred."

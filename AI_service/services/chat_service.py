@@ -24,6 +24,26 @@ from AI_service.time_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+def build_retrieval_query(history: list[dict], message: str) -> str:
+    """Resolve follow-up references using prior user questions, not model claims."""
+    previous_questions = [
+        item["content"].strip()
+        for item in history
+        if item.get("role") == "user"
+        and isinstance(item.get("content"), str)
+        and item["content"].strip()
+    ][-2:]
+    if not previous_questions:
+        return message
+
+    return (
+        "Earlier user questions for conversation context: "
+        + " | ".join(previous_questions)
+        + "\nCurrent question: "
+        + message
+    )
+
+
 def create_conversation_for_chat(user_id: int) -> str:
     conversation_id = str(uuid.uuid4())
     now = utc_now()
@@ -67,7 +87,12 @@ def send_message(
                 {"role": row["role"], "content": row["content"]}
                 for row in reversed(prior_messages)
             ]
-            retrieved = rag.search_chunks(connection, user["id"], message)
+            retrieval_query = build_retrieval_query(history, message)
+            retrieved = rag.search_chunks(
+                connection,
+                user["id"],
+                retrieval_query
+            )
             identifier = (
                 request.customer_identifier.strip()
                 if request.customer_identifier

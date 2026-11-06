@@ -7,8 +7,11 @@ CommunicationType = Literal["email", "message"]
 CommunicationPurpose = Literal[
     "customer_support",
     "follow_up",
+    "reminder",
     "announcement",
+    "business_update",
     "invitation",
+    "meeting_confirmation",
     "custom"
 ]
 CommunicationTone = Literal[
@@ -32,6 +35,7 @@ class CommunicationRequest(BaseModel):
     language: str = Field(default="English", min_length=1, max_length=100)
     recipient_name: str | None = Field(default=None, max_length=120)
     recipient_context: str | None = Field(default=None, max_length=2000)
+    key_points: list[str] = Field(default_factory=list, max_length=20)
     customer_identifier: str | None = Field(default=None, max_length=200)
     custom_purpose: str | None = Field(default=None, max_length=300)
     additional_instructions: str | None = Field(default=None, max_length=2000)
@@ -52,6 +56,19 @@ class CommunicationRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("key_points")
+    @classmethod
+    def validate_key_points(cls, values: list[str]) -> list[str]:
+        normalized_values = []
+        for value in values:
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("Key points must not be blank.")
+            if len(normalized) > 500:
+                raise ValueError("Each key point must be at most 500 characters.")
+            normalized_values.append(normalized)
+        return normalized_values
 
     @model_validator(mode="after")
     def validate_custom_purpose(self):

@@ -90,6 +90,10 @@ class CommunicationApiTests(unittest.TestCase):
                     "language": "English",
                     "recipient_name": "John",
                     "recipient_context": "Ask about HisabDo expense tracking.",
+                    "key_points": [
+                        "Mention the offline-first records feature.",
+                        "Ask whether John wants a product walkthrough."
+                    ],
                     "sender_name": "Ari",
                     "additional_instructions": (
                         "Follow up about the previous meeting."
@@ -111,12 +115,24 @@ class CommunicationApiTests(unittest.TestCase):
             prompt["generation_options"]["length_guidance"],
             "about 80-140 words in the body"
         )
+        self.assertEqual(
+            prompt["key_points"],
+            [
+                "Mention the offline-first records feature.",
+                "Ask whether John wants a product walkthrough."
+            ]
+        )
+        self.assertIn("Include every supplied key point", prompt["instructions"])
         self.assertIn("HisabDo", search.call_args.args[0])
         self.assertIn("Never invent", prompt["instructions"])
 
     def test_short_message_has_no_email_fields_or_formatting(self):
         with (
-            patch.object(api.chat_api, "search_knowledge", return_value=[]),
+            patch.object(
+                api.chat_api,
+                "search_knowledge",
+                return_value=[]
+            ) as search,
             patch.object(
                 api.ai_service,
                 "generate_answer",
@@ -216,6 +232,92 @@ class CommunicationApiTests(unittest.TestCase):
         self.assertEqual(prompt["generation_options"]["tone"], "empathetic")
         self.assertEqual(prompt["generation_options"]["length"], "long")
         self.assertEqual(prompt["generation_options"]["language"], "Spanish")
+
+    def test_reminder_business_update_and_meeting_confirmation_purposes(self):
+        for purpose in ("reminder", "business_update", "meeting_confirmation"):
+            with self.subTest(purpose=purpose):
+                with (
+                    patch.object(
+                        api.chat_api,
+                        "search_knowledge",
+                        return_value=[]
+                    ),
+                    patch.object(
+                        api.ai_service,
+                        "generate_answer",
+                        return_value=json.dumps({
+                            "message": "Please share any details to confirm."
+                        })
+                    ) as generate
+                ):
+                    response = self.client.post(
+                        "/api/communications/generate",
+                        headers=self.headers,
+                        json={
+                            "communication_type": "message",
+                            "purpose": purpose
+                        }
+                    )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                prompt = json.loads(generate.call_args.args[0])
+                self.assertEqual(
+                    prompt["generation_options"]["purpose"],
+                    purpose.replace("_", " ")
+                )
+
+    def test_key_points_are_trimmed_and_bounded(self):
+        with (
+            patch.object(
+                api.chat_api,
+                "search_knowledge",
+                return_value=[]
+            ) as search,
+            patch.object(
+                api.ai_service,
+                "generate_answer",
+                return_value=json.dumps({
+                    "message": "Please include the reference number."
+                })
+            ) as generate
+        ):
+            valid = self.client.post(
+                "/api/communications/generate",
+                headers=self.headers,
+                json={
+                    "communication_type": "message",
+                    "key_points": ["  Include the reference number.  "]
+                }
+            )
+        blank = self.client.post(
+            "/api/communications/generate",
+            headers=self.headers,
+            json={"communication_type": "message", "key_points": ["   "]}
+        )
+        oversized = self.client.post(
+            "/api/communications/generate",
+            headers=self.headers,
+            json={
+                "communication_type": "message",
+                "key_points": ["x" * 501]
+            }
+        )
+        too_many = self.client.post(
+            "/api/communications/generate",
+            headers=self.headers,
+            json={
+                "communication_type": "message",
+                "key_points": [f"Point {index}" for index in range(21)]
+            }
+        )
+
+        self.assertEqual(valid.status_code, 200, valid.text)
+        prompt = json.loads(generate.call_args.args[0])
+        self.assertEqual(prompt["key_points"], ["Include the reference number."])
+        self.assertIn("reference number", search.call_args.args[0])
+        self.assertEqual(blank.status_code, 422)
+        self.assertEqual(oversized.status_code, 422)
+        self.assertEqual(too_many.status_code, 422)
 
     def test_customer_context_is_requested_only_for_identifier_and_user_scoped(self):
         self.add_record(
