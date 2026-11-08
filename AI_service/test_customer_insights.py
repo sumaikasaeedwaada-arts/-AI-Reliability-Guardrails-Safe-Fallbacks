@@ -230,6 +230,78 @@ class CustomerInsightsApiTests(unittest.TestCase):
         ))
         generate.assert_not_called()
 
+    def test_business_insights_route_reuses_scoped_analysis(self):
+        self.add_record(
+            "business-one",
+            "Complaint: late delivery.",
+            "2026-10-20T12:00:00+00:00"
+        )
+        self.add_record(
+            "business-two",
+            "Complaint: late delivery on the second order.",
+            "2026-10-21T12:00:00+00:00"
+        )
+        other_user = self.client.post("/api/auth/register", json={
+            "email": "other-business@example.com",
+            "password": "a-secure-test-password"
+        }).json()["user"]["id"]
+        self.add_record(
+            "private-business",
+            "Complaint: late delivery.",
+            "2026-10-22T12:00:00+00:00",
+            user_id=other_user
+        )
+        with patch.object(
+            api.ai_service,
+            "generate_answer",
+            return_value=json.dumps([{
+                "evidence_topic": "Delivery delays",
+                "opportunity": "Review repeated delivery delay records."
+            }])
+        ) as generate:
+            response = self.client.post(
+                "/api/business/insights/generate",
+                headers=self.headers,
+                json={}
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        delivery = response.json()["insights"]["frequently_reported_issues"][0]
+        self.assertEqual(delivery["occurrence_count"], 2)
+        self.assertEqual(delivery["distinct_document_count"], 2)
+        self.assertNotIn("private-business", generate.call_args.args[0])
+
+    def test_exact_duplicate_documents_do_not_create_recurring_insights(self):
+        self.add_record(
+            "first-copy",
+            "Complaint: late delivery.",
+            "2026-10-20T12:00:00+00:00"
+        )
+        self.add_record(
+            "second-copy",
+            " complaint:   late delivery. ",
+            "2026-10-21T12:00:00+00:00"
+        )
+        with patch.object(api.ai_service, "generate_answer") as generate:
+            response = self.client.post(
+                "/api/business/insights/generate",
+                headers=self.headers,
+                json={}
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        insights = response.json()["insights"]
+        self.assertEqual(insights["frequently_reported_issues"], [])
+        self.assertTrue(any(
+            "excluded 1 exact duplicate" in item.lower()
+            for item in insights["data_limitations"]
+        ))
+        generate.assert_not_called()
+
+    def test_business_insights_route_requires_authentication(self):
+        response = self.client.post("/api/business/insights/generate", json={})
+        self.assertEqual(response.status_code, 401)
+
     def test_customer_and_upload_date_filters_are_applied(self):
         self.add_record(
             "matching-old",
@@ -238,7 +310,7 @@ class CustomerInsightsApiTests(unittest.TestCase):
         )
         self.add_record(
             "matching-current",
-            "C-104 reported a late delivery.",
+            "C-104 reported a late delivery again.",
             "2026-10-25T12:00:00+00:00"
         )
         self.add_record(
@@ -290,7 +362,7 @@ class CustomerInsightsApiTests(unittest.TestCase):
         )
         self.add_record(
             "two",
-            "Complaint: late delivery.",
+            "Complaint: late delivery. Separate record two.",
             "2026-10-21T12:00:00+00:00"
         )
         with patch.object(
@@ -315,7 +387,7 @@ class CustomerInsightsApiTests(unittest.TestCase):
         )
         self.add_record(
             "two",
-            "Complaint: late delivery.",
+            "Complaint: late delivery. Separate record two.",
             "2026-10-21T12:00:00+00:00"
         )
         with patch.object(

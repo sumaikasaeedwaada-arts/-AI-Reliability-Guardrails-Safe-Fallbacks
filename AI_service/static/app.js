@@ -19,6 +19,9 @@ const notificationsPanel = document.querySelector("#notifications-panel");
 const notificationCount = document.querySelector("#notification-count");
 const notificationList = document.querySelector("#notification-list");
 const loadMoreNotifications = document.querySelector("#load-more-notifications");
+const businessReport = document.querySelector("#business-report");
+const summaryButton = document.querySelector("#generate-summary");
+const insightsButton = document.querySelector("#generate-insights");
 
 let token = localStorage.getItem("assistant-token");
 let activeConversation = null;
@@ -49,6 +52,170 @@ function showToast(message) {
   toast.classList.add("visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 3600);
+}
+
+function addReportSection(parent, title, items, emptyMessage) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.append(heading);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "report-empty";
+    empty.textContent = emptyMessage;
+    section.append(empty);
+  } else {
+    const list = document.createElement("ul");
+    for (const item of items) {
+      const entry = document.createElement("li");
+      entry.textContent = item;
+      list.append(entry);
+    }
+    section.append(list);
+  }
+  parent.append(section);
+}
+
+function renderBusinessSummary(summary) {
+  businessReport.replaceChildren();
+  const overview = document.createElement("p");
+  overview.className = "report-overview";
+  overview.textContent = summary.business_overview;
+  businessReport.append(overview);
+  addReportSection(
+    businessReport,
+    "Key activities",
+    summary.key_activities,
+    "No activities were available in the selected records."
+  );
+  addReportSection(
+    businessReport,
+    "Customer updates",
+    summary.customer_updates,
+    "No matching customer updates were available."
+  );
+  addReportSection(
+    businessReport,
+    "Task updates",
+    summary.task_updates,
+    "No task updates were available in the selected records."
+  );
+  addReportSection(
+    businessReport,
+    "Important updates",
+    summary.important_updates,
+    "No important updates were identified in the selected records."
+  );
+  addReportSection(
+    businessReport,
+    "Operational insights",
+    summary.operational_insights,
+    "No operational insights were supported by the selected records."
+  );
+  addReportSection(
+    businessReport,
+    "Data limitations",
+    summary.data_limitations,
+    "No additional limitations were reported."
+  );
+  businessReport.classList.remove("hidden");
+}
+
+function renderBusinessInsights(insights) {
+  businessReport.replaceChildren();
+  const groups = [
+    ["Frequently reported issues", insights.frequently_reported_issues],
+    ["Interaction patterns", insights.interaction_patterns],
+    ["Feedback themes", insights.feedback_themes],
+    ["Transaction wording patterns", insights.transaction_patterns]
+  ];
+  for (const [title, items] of groups) {
+    const section = document.createElement("section");
+    section.className = "report-section";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    section.append(heading);
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "report-empty";
+      empty.textContent = "No repeated pattern met the evidence threshold.";
+      section.append(empty);
+    } else {
+      const list = document.createElement("ul");
+      for (const item of items) {
+        const entry = document.createElement("li");
+        const period = item.first_record_upload && item.last_record_upload
+          ? ` Uploaded ${item.first_record_upload.slice(0, 10)} to ${item.last_record_upload.slice(0, 10)}.`
+          : "";
+        entry.textContent =
+          `${item.topic}: ${item.occurrence_count} text mentions in ` +
+          `${item.distinct_document_count} documents.${period}`;
+        list.append(entry);
+      }
+      section.append(list);
+    }
+    businessReport.append(section);
+  }
+  const recommendations = insights.service_opportunities.map((item) =>
+    `${item.opportunity} Evidence: ${item.evidence_topic} in ` +
+    `${item.supporting_document_count} documents (${item.basis}).`
+  );
+  addReportSection(
+    businessReport,
+    "Evidence-based recommendations",
+    recommendations,
+    "No recommendation was generated without repeated supporting evidence."
+  );
+  addReportSection(
+    businessReport,
+    "Data limitations",
+    insights.data_limitations,
+    "No additional limitations were reported."
+  );
+  businessReport.classList.remove("hidden");
+}
+
+async function generateBusinessReport(button, path, payload, render) {
+  const defaultLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Generating…";
+  businessReport.replaceChildren();
+  businessReport.classList.remove("hidden");
+  businessReport.setAttribute("aria-busy", "true");
+  const loading = document.createElement("p");
+  loading.className = "report-loading";
+  loading.textContent = "Preparing a report from your available records…";
+  businessReport.append(loading);
+  try {
+    const result = await api(path, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    render(result.summary || result.insights);
+  } catch (error) {
+    businessReport.replaceChildren();
+    const message = document.createElement("p");
+    message.className = "report-error";
+    message.setAttribute("role", "alert");
+    message.textContent = error.message;
+    businessReport.append(message);
+  } finally {
+    businessReport.setAttribute("aria-busy", "false");
+    button.disabled = false;
+    button.textContent = defaultLabel;
+  }
+}
+
+function readReportFilters() {
+  const date_from = document.querySelector("#report-date-from").value;
+  const date_to = document.querySelector("#report-date-to").value;
+  const customer_identifier = document.querySelector("#report-customer").value.trim();
+  return {
+    ...(date_from ? { date_from } : {}),
+    ...(date_to ? { date_to } : {}),
+    ...(customer_identifier ? { customer_identifier } : {})
+  };
 }
 
 function signOut() {
@@ -391,6 +558,23 @@ document.querySelector("#close-sidebar").addEventListener("click", () => {
 });
 documentInput.addEventListener("change", uploadSelectedFile);
 document.querySelector("#sign-out").addEventListener("click", signOut);
+summaryButton.addEventListener("click", () => {
+  const filters = readReportFilters();
+  generateBusinessReport(
+    summaryButton,
+    "/api/business-summary",
+    filters,
+    renderBusinessSummary
+  );
+});
+insightsButton.addEventListener("click", () => {
+  generateBusinessReport(
+    insightsButton,
+    "/api/business/insights/generate",
+    readReportFilters(),
+    renderBusinessInsights
+  );
+});
 notificationsTrigger.addEventListener("click", async () => {
   const opening = notificationsPanel.classList.contains("hidden");
   notificationsPanel.classList.toggle("hidden", !opening);

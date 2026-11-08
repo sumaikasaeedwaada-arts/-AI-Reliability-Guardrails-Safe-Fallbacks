@@ -90,6 +90,7 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 | `POST` | `/chat` | Yes | Send a required `message`; optionally continue a conversation with `conversation_id`; returns the answer, citations, and conversation ID |
 | `POST` | `/api/business-summary` | Yes | Generate a structured summary from the caller's uploaded records and optional request-supplied business/task context |
 | `POST` | `/api/customer-insights` | Yes | Analyze the caller's uploaded records for repeated customer issues, interaction wording, feedback themes, and transaction wording |
+| `POST` | `/api/business/insights/generate` | Yes | Generate evidence-based insights from the caller's uploaded records |
 | `GET` | `/api/customers/search?q=...` | Yes | Search the caller's ready uploaded-document text for customer-related excerpts |
 | `GET` | `/api/tasks/search?q=...` | Yes | Search the caller's ready uploaded-document text for task-related excerpts |
 | `POST` | `/api/communications/generate` | Yes | Generate a grounded email or short message with configurable purpose, tone, length, and language |
@@ -264,6 +265,16 @@ API therefore does not accept a `business_id` filter. `date_from` and
 dates mentioned inside document contents. At most the five most recent
 document chunks plus up to five matching customer chunks are sent to the
 configured Gemini model. Missing records and these limitations are reported.
+
+The workspace provides summary and insights generation controls. Both refresh
+from current user-owned records when selected. Business insights use the same
+document-backed measurement as `/api/customer-insights`: repeated issue,
+interaction, feedback, and transaction wording is counted in at least two
+distinct documents before being reported. Recommendations are generated only
+from measured issue or feedback evidence. These counts are text mentions and
+document counts, not normalized customers, verified cases, transactions, or
+task completion statistics; the current schema has no structured task or
+transaction records. Date filters apply to document upload dates.
 
 Example request:
 

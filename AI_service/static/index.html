@@ -77,6 +77,25 @@
             <button id="mobile-upload" class="icon-button" aria-label="Add documents">＋</button>
           </div>
         </header>
+        <section class="business-tools" aria-labelledby="business-tools-title">
+          <div class="business-tools-heading">
+            <div>
+              <h2 id="business-tools-title">Business reports</h2>
+              <p>Generated from your uploaded records. Missing data is identified, not estimated.</p>
+            </div>
+            <div class="business-report-actions">
+              <button id="generate-summary" class="report-button" type="button">Generate summary</button>
+              <button id="generate-insights" class="report-button secondary" type="button">Generate insights</button>
+            </div>
+          </div>
+          <div class="report-filters">
+            <label>Uploaded from<input id="report-date-from" type="date"></label>
+            <label>Uploaded through<input id="report-date-to" type="date"></label>
+            <label>Customer identifier (optional)<input id="report-customer" type="text"
+              maxlength="200" placeholder="Insights filter"></label>
+          </div>
+          <div id="business-report" class="business-report hidden" aria-live="polite"></div>
+        </section>
         <div id="messages" class="messages" aria-live="polite">
           <div id="welcome" class="welcome">
             <div class="welcome-icon">✦</div>

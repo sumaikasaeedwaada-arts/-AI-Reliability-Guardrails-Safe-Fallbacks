@@ -522,6 +522,24 @@ def customer_insights(
     request: CustomerInsightsRequest,
     user: dict = Depends(authenticated_user)
 ):
+    return _generate_customer_insights_response(request, user)
+
+
+@app.post(
+    "/api/business/insights/generate",
+    response_model=CustomerInsightsResponse
+)
+def generate_business_insights(
+    request: CustomerInsightsRequest,
+    user: dict = Depends(authenticated_user)
+):
+    return _generate_customer_insights_response(request, user)
+
+
+def _generate_customer_insights_response(
+    request: CustomerInsightsRequest,
+    user: dict
+):
     try:
         insights = generate_customer_insights(user["id"], request)
         return {"success": True, "insights": insights}

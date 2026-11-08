@@ -182,7 +182,18 @@ def _retrieve_records(user_id: int, request: CustomerInsightsRequest):
         })
     for record in records.values():
         record["texts"] = _reconstruct_text(record.pop("segments"))
-    return records, is_truncated
+
+    unique_records = {}
+    seen_content = set()
+    duplicate_count = 0
+    for document_id, record in records.items():
+        normalized_content = " ".join(" ".join(record["texts"]).split()).casefold()
+        if normalized_content in seen_content:
+            duplicate_count += 1
+            continue
+        seen_content.add(normalized_content)
+        unique_records[document_id] = record
+    return unique_records, is_truncated, duplicate_count
 
 
 def _reconstruct_text(segments: list[dict]) -> list[str]:
@@ -265,7 +276,8 @@ def _measure_patterns(records: dict[str, dict], patterns: dict[str, re.Pattern])
 def _build_facts(
     records: dict[str, dict],
     truncated: bool,
-    customer_identifier: str | None = None
+    customer_identifier: str | None = None,
+    duplicate_document_count: int = 0
 ):
     issues = _measure_patterns(records, ISSUE_TERMS)
     interactions = _measure_patterns(records, INTERACTION_TERMS)
@@ -273,9 +285,9 @@ def _build_facts(
     transactions = _measure_patterns(records, TRANSACTION_TERMS)
     limitations = [
         (
-            "The database has no normalized customer, interaction, support-ticket, "
-            "feedback, or transaction tables; analysis uses user-owned uploaded "
-            "document text only."
+            "The database has no normalized customer, company-profile, task, "
+            "operational-activity, interaction, support-ticket, feedback, or "
+            "transaction tables; analysis uses user-owned uploaded document text only."
         ),
         (
             "The conversation table stores AI chat history, not a structured "
@@ -308,6 +320,11 @@ def _build_facts(
         limitations.append(
             f"Analysis was capped at {MAX_CUSTOMER_INSIGHT_RECORDS} chunks or "
             f"{MAX_EVIDENCE_TEXT_CHARS} characters; additional text was omitted."
+        )
+    if duplicate_document_count:
+        limitations.append(
+            f"Excluded {duplicate_document_count} exact duplicate uploaded "
+            "document(s) from pattern counts."
         )
     if not issues:
         limitations.append(
@@ -404,11 +421,15 @@ def generate_customer_insights(
     user_id: int,
     request: CustomerInsightsRequest
 ) -> CustomerInsights:
-    records, truncated = _retrieve_records(user_id, request)
+    records, truncated, duplicate_document_count = _retrieve_records(
+        user_id,
+        request
+    )
     issues, interactions, feedback, transactions, limitations = _build_facts(
         records,
         truncated,
-        request.customer_identifier
+        request.customer_identifier,
+        duplicate_document_count
     )
     opportunities = _generate_opportunities(issues, feedback)
     return CustomerInsights(
