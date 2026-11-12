@@ -106,6 +106,16 @@ Interactive OpenAPI documentation is available at `/docs`; the schema is at `/op
 
 Authenticated endpoints expect `Authorization: Bearer <access_token>`. The API rate limits each client IP to 10 auth requests/minute and 120 other API requests/minute. Configure trusted proxy handling at the ingress if deployed behind a reverse proxy.
 
+AI-generation routes and document uploads have an additional fixed-window
+limit of 20 requests per client IP per minute by default; configure
+`AI_RATE_LIMIT_PER_MINUTE` to change it. Gemini generation and embedding calls
+use `GEMINI_TIMEOUT_MS` (30 seconds by default). Provider timeouts return HTTP
+504, invalid provider output returns HTTP 502, and provider authentication or
+availability failures return a sanitized HTTP 503 message. These responses do
+not include generated content or provider exception details. Rate limits share
+the configured SQLite database across workers; IP-based limits require trusted
+proxy configuration when the service is deployed behind a reverse proxy.
+
 Notifications are stored persistently in SQLite, are scoped to their recipient,
 and are returned newest-first. A successful document upload creates a
 deduplicated “Document ready” notification for the authenticated uploader.

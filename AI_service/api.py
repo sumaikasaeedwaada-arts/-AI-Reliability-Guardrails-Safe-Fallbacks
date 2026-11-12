@@ -31,6 +31,7 @@ from AI_service import (
     settings
 )
 from AI_service.dependencies import authenticated_user, owned_conversation
+from AI_service.errors import AIProviderError
 from AI_service.routes.chat import router as chat_router
 from AI_service.schemas.business_summary import (
     BusinessSummaryRequest,
@@ -84,6 +85,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 STATIC_DIRECTORY = os.path.join(os.path.dirname(__file__), "static")
+AI_RATE_LIMITED_PATHS = {
+    "/chat",
+    "/api/business-summary",
+    "/api/customer-insights",
+    "/api/business/insights/generate",
+    "/api/communications/generate",
+    "/api/documents"
+}
 
 
 class RegisterRequest(BaseModel):
@@ -98,6 +107,25 @@ class LoginRequest(BaseModel):
 
 class ConversationRequest(BaseModel):
     title: str = Field(default="New conversation", min_length=1, max_length=160)
+
+
+def _is_ai_request(method: str, path: str) -> bool:
+    if method != "POST":
+        return False
+    return (
+        path in AI_RATE_LIMITED_PATHS
+        or (
+            path.startswith("/api/conversations/")
+            and path.endswith("/messages")
+        )
+    )
+
+
+def _ai_provider_http_exception(error: AIProviderError) -> HTTPException:
+    return HTTPException(
+        status_code=error.status_code,
+        detail=error.public_message
+    )
 
 
 @asynccontextmanager
@@ -122,49 +150,65 @@ class SQLiteRateLimitMiddleware(BaseHTTPMiddleware):
                 "/api/auth/login",
                 "/api/auth/register"
             } else "api"
-            limit = 10 if category == "auth" else 120
-            bucket_key = f"{category}:{client_host}"
             now = time.time()
+            limits = [
+                (category, client_host, 10 if category == "auth" else 120)
+            ]
+            if category != "auth" and _is_ai_request(
+                request.method,
+                path
+            ):
+                limits.append((
+                    "ai",
+                    client_host,
+                    settings.AI_RATE_LIMIT_PER_MINUTE
+                ))
             with database.connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                bucket = connection.execute(
-                    "SELECT window_started, request_count FROM rate_limit_buckets "
-                    "WHERE bucket_key = ?",
-                    (bucket_key,)
-                ).fetchone()
-                if bucket is None or now - bucket["window_started"] >= 60:
-                    connection.execute(
-                        """
-                        INSERT INTO rate_limit_buckets
-                            (bucket_key, window_started, request_count)
-                        VALUES (?, ?, 1)
-                        ON CONFLICT(bucket_key) DO UPDATE SET
-                            window_started = excluded.window_started,
-                            request_count = 1
-                        """,
-                        (bucket_key, now)
-                    )
-                    count = 1
-                else:
-                    count = bucket["request_count"] + 1
-                    if count <= limit:
+                for bucket_category, identity, limit in limits:
+                    bucket_key = f"{bucket_category}:{identity}"
+                    bucket = connection.execute(
+                        "SELECT window_started, request_count "
+                        "FROM rate_limit_buckets WHERE bucket_key = ?",
+                        (bucket_key,)
+                    ).fetchone()
+                    if (
+                        bucket is None
+                        or now - bucket["window_started"] >= 60
+                    ):
+                        connection.execute(
+                            """
+                            INSERT INTO rate_limit_buckets
+                                (bucket_key, window_started, request_count)
+                            VALUES (?, ?, 1)
+                            ON CONFLICT(bucket_key) DO UPDATE SET
+                                window_started = excluded.window_started,
+                                request_count = 1
+                            """,
+                            (bucket_key, now)
+                        )
+                    else:
+                        count = bucket["request_count"] + 1
+                        if count > limit:
+                            retry_after = max(
+                                1,
+                                int(60 - (now - bucket["window_started"]))
+                            )
+                            return JSONResponse(
+                                status_code=429,
+                                content={
+                                    "detail": (
+                                        "Rate limit exceeded. "
+                                        "Please try again shortly."
+                                    )
+                                },
+                                headers={"Retry-After": str(retry_after)}
+                            )
                         connection.execute(
                             "UPDATE rate_limit_buckets SET request_count = ? "
                             "WHERE bucket_key = ?",
                             (count, bucket_key)
                         )
-                if count > limit:
-                    retry_after = max(
-                        1,
-                        int(60 - (now - bucket["window_started"]))
-                    )
-                    return JSONResponse(
-                        status_code=429,
-                        content={
-                            "detail": "Rate limit exceeded. Please try again shortly."
-                        },
-                        headers={"Retry-After": str(retry_after)}
-                    )
         return await call_next(request)
 
 
@@ -495,6 +539,8 @@ def business_summary(
     try:
         summary = generate_business_summary(user["id"], request)
         return {"success": True, "summary": summary}
+    except AIProviderError as exc:
+        raise _ai_provider_http_exception(exc) from exc
     except InvalidBusinessSummaryError as exc:
         logger.warning("Business summary generation returned invalid output.")
         raise HTTPException(
@@ -543,6 +589,8 @@ def _generate_customer_insights_response(
     try:
         insights = generate_customer_insights(user["id"], request)
         return {"success": True, "insights": insights}
+    except AIProviderError as exc:
+        raise _ai_provider_http_exception(exc) from exc
     except InvalidCustomerInsightsError as exc:
         logger.warning("Customer insights model returned invalid output.")
         raise HTTPException(
@@ -573,6 +621,8 @@ def generate_communication_content(
     try:
         content = generate_communication(user["id"], request)
         return {"success": True, "content": content}
+    except AIProviderError as exc:
+        raise _ai_provider_http_exception(exc) from exc
     except InvalidCommunicationError as exc:
         logger.warning("Communication model returned invalid output.")
         raise HTTPException(
@@ -629,6 +679,8 @@ async def upload_document(
         ]
         if len({len(embedding) for _, _, embedding in embedded_chunks}) != 1:
             raise ValueError("Embedding dimensions are inconsistent.")
+    except AIProviderError as exc:
+        raise _ai_provider_http_exception(exc) from exc
     except Exception as exc:
         logger.error("Document ingestion failed.")
         raise HTTPException(

@@ -3,11 +3,19 @@ import os
 import tempfile
 import unittest
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
+from google.genai import errors as genai_errors
 
 from AI_service import api, rag, security
+from AI_service.errors import (
+    AIProviderAuthenticationError,
+    AIProviderError,
+)
+from AI_service.services import ai_model_service
 
 
 class RagUnitTests(unittest.TestCase):
@@ -149,9 +157,9 @@ class RagApiTests(unittest.TestCase):
 
     def test_chat_endpoint_sanitizes_model_timeouts(self):
         with patch.object(
-            api.ai_service,
-            "generate_answer",
-            side_effect=TimeoutError("private provider detail")
+            ai_model_service.client.models,
+            "generate_content",
+            side_effect=httpx.ReadTimeout("private provider detail")
         ):
             response = self.client.post(
                 "/chat",
@@ -159,8 +167,119 @@ class RagApiTests(unittest.TestCase):
                 json={"message": "Question"}
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 504)
         self.assertNotIn("private provider detail", response.text)
+        self.assertIn("timed out", response.json()["detail"])
+
+    def test_chat_sanitizes_provider_authentication_and_connection_errors(self):
+        provider_failures = (
+            (
+                genai_errors.ClientError(
+                    401,
+                    {"message": "private invalid API key"}
+                ),
+                "could not authenticate"
+            ),
+            (
+                httpx.ConnectError("private provider hostname"),
+                "temporarily unavailable"
+            )
+        )
+        for error, expected_detail in provider_failures:
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(
+                    ai_model_service.client.models,
+                    "generate_content",
+                    side_effect=error
+                )
+            ):
+                response = self.client.post(
+                    "/chat",
+                    headers=self.headers,
+                    json={"message": "Question"}
+                )
+
+            self.assertEqual(response.status_code, 503)
+            self.assertIn(expected_detail, response.json()["detail"])
+            self.assertNotIn("private", response.text)
+
+    def test_chat_provider_failures_are_safe_and_recovery_succeeds(self):
+        with patch.object(
+            api.ai_service,
+            "generate_answer",
+            side_effect=[
+                AIProviderAuthenticationError("private API key detail"),
+                AIProviderError("private provider response"),
+                "The provider recovered."
+            ]
+        ) as generate:
+            authentication_failure = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "Question"}
+            )
+            unavailable = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "Question"}
+            )
+            recovered = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "Question"}
+            )
+
+        self.assertEqual(authentication_failure.status_code, 503)
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["response"], "The provider recovered.")
+        self.assertNotIn("private", authentication_failure.text)
+        self.assertNotIn("private", unavailable.text)
+        self.assertEqual(generate.call_count, 3)
+
+    def test_chat_rejects_invalid_provider_response(self):
+        with patch.object(
+            ai_model_service.client.models,
+            "generate_content",
+            return_value=SimpleNamespace(text="")
+        ):
+            response = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "Question"}
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("private model output", response.text)
+        self.assertIn("invalid response", response.json()["detail"])
+
+    def test_ai_rate_limit_is_enforced_separately(self):
+        with (
+            api.database.connect() as connection,
+            patch.object(api.settings, "AI_RATE_LIMIT_PER_MINUTE", 1),
+            patch.object(
+                api.ai_service,
+                "generate_answer",
+                return_value="First response."
+            ) as generate
+        ):
+            connection.execute("DELETE FROM rate_limit_buckets")
+            first = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "First question"}
+            )
+            second = self.client.post(
+                "/chat",
+                headers=self.headers,
+                json={"message": "Second question"}
+            )
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 429)
+        self.assertIn("Retry-After", second.headers)
+        self.assertEqual(generate.call_count, 1)
 
     def test_upload_retrieval_citations_and_persisted_history(self):
         def embedding(*args):

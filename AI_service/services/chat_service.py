@@ -13,7 +13,11 @@ from AI_service import (
     settings,
 )
 from AI_service.dependencies import owned_conversation
-from AI_service.errors import ChatUnavailableError, InvalidChatMessageError
+from AI_service.errors import (
+    AIProviderError,
+    ChatUnavailableError,
+    InvalidChatMessageError,
+)
 from AI_service.schemas.chat import (
     MessageRequest,
     build_chat_prompt,
@@ -183,6 +187,8 @@ def send_message(
         answer = ai_service.generate_answer(prompt).strip()
         if not answer:
             raise ValueError("The model returned an empty response.")
+    except AIProviderError:
+        raise
     except Exception as exc:
         logger.error("Chat generation failed.")
         raise ChatUnavailableError(

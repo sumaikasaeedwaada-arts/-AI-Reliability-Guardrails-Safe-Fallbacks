@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from AI_service import api
 from AI_service.dependencies import authenticated_user
+from AI_service.errors import AIProviderTimeoutError
 
 
 VALID_SUMMARY = {
@@ -243,7 +244,7 @@ class BusinessSummaryApiTests(unittest.TestCase):
         with patch.object(
             api.ai_service,
             "generate_answer",
-            side_effect=TimeoutError("private provider credential")
+            side_effect=AIProviderTimeoutError("private provider credential")
         ):
             response = self.client.post(
                 "/api/business-summary",
@@ -251,7 +252,7 @@ class BusinessSummaryApiTests(unittest.TestCase):
                 json={}
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 504)
         self.assertNotIn("credential", response.text)
 
     def test_invalid_ai_output_returns_bad_gateway(self):

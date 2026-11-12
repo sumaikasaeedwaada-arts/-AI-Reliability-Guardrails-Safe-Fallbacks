@@ -7,6 +7,7 @@ from datetime import datetime, time, timedelta, timezone
 from pydantic import ValidationError
 
 from AI_service import ai_service, database, settings
+from AI_service.errors import AIProviderError
 from AI_service.schemas.customer_insights import (
     CustomerInsight,
     CustomerInsights,
@@ -290,6 +291,11 @@ def _build_facts(
             "transaction tables; analysis uses user-owned uploaded document text only."
         ),
         (
+            "Total, active, inactive, and unique customer counts cannot be "
+            "calculated from the current schema. Application user accounts "
+            "and customer mentions in documents are not treated as customers."
+        ),
+        (
             "The conversation table stores AI chat history, not a structured "
             "customer-interaction log, so chat messages are excluded."
         ),
@@ -409,6 +415,8 @@ def _generate_opportunities(issues, feedback):
     }, ensure_ascii=False)
     try:
         response = ai_service.generate_answer(prompt)
+    except AIProviderError:
+        raise
     except Exception as exc:
         logger.error("Customer insights model request failed.")
         raise CustomerInsightsUnavailableError from exc

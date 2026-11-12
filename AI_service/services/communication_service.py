@@ -5,6 +5,7 @@ import re
 from pydantic import ValidationError
 
 from AI_service import ai_service, chat_api, customer_context, database, settings
+from AI_service.errors import AIProviderError
 from AI_service.schemas.communication import (
     CommunicationRequest,
     EmailContent,
@@ -178,6 +179,8 @@ def generate_communication(
     prompt = _build_prompt(request, business_context, customer_records)
     try:
         response = ai_service.generate_answer(prompt)
+    except AIProviderError:
+        raise
     except Exception as exc:
         logger.error("Communication generation failed.")
         raise CommunicationUnavailableError from exc

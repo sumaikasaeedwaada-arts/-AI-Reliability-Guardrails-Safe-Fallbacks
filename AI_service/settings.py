@@ -7,12 +7,17 @@ AUTH_SECRET = os.getenv("AUTH_SECRET", "")
 ACCESS_TOKEN_TTL_SECONDS = int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "3600"))
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 GEMINI_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "30000"))
+AI_RATE_LIMIT_PER_MINUTE = int(
+    os.getenv("AI_RATE_LIMIT_PER_MINUTE", "20")
+)
 GEMINI_EMBEDDING_MODEL = os.getenv(
     "GEMINI_EMBEDDING_MODEL",
     "gemini-embedding-001"
 )
 if GEMINI_TIMEOUT_MS <= 0:
     raise ValueError("GEMINI_TIMEOUT_MS must be a positive integer.")
+if AI_RATE_LIMIT_PER_MINUTE <= 0:
+    raise ValueError("AI_RATE_LIMIT_PER_MINUTE must be a positive integer.")
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_CHUNKS = 250
 MAX_CHUNK_CHARS = 1200

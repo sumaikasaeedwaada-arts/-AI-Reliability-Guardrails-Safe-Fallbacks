@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from AI_service import api
+from AI_service.errors import AIProviderTimeoutError
 
 
 class CommunicationApiTests(unittest.TestCase):
@@ -426,7 +427,7 @@ class CommunicationApiTests(unittest.TestCase):
             patch.object(
                 api.ai_service,
                 "generate_answer",
-                side_effect=TimeoutError("private provider details")
+                side_effect=AIProviderTimeoutError("private provider details")
             )
         ):
             timed_out = self.client.post(
@@ -449,7 +450,7 @@ class CommunicationApiTests(unittest.TestCase):
                 json={"communication_type": "email"}
             )
 
-        self.assertEqual(timed_out.status_code, 503)
+        self.assertEqual(timed_out.status_code, 504)
         self.assertNotIn("private provider", timed_out.text)
         self.assertEqual(invalid.status_code, 502)
         self.assertNotIn("missing body", invalid.text)

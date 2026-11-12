@@ -6,6 +6,7 @@ from datetime import datetime, time, timedelta, timezone
 from pydantic import ValidationError
 
 from AI_service import ai_service, customer_context, database, settings
+from AI_service.errors import AIProviderError
 from AI_service.schemas.business_summary import (
     BusinessSummary,
     BusinessSummaryRequest,
@@ -220,6 +221,8 @@ def generate_business_summary(
     }, ensure_ascii=False)
     try:
         result = ai_service.generate_answer(prompt)
+    except AIProviderError:
+        raise
     except Exception as exc:
         logger.error("Business summary model request failed.")
         raise BusinessSummaryUnavailableError from exc
