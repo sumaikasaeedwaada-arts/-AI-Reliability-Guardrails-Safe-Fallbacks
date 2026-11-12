@@ -1,4 +1,4 @@
-# Implement the Summary Generation Service
+# AI Reliability Guardrails and Safe Fallbacks
 
 An authenticated FastAPI business assistant with conversation history, document ingestion, semantic retrieval, and source citations. The browser UI is served by the API, and Gemini is configured through environment variables.
 
